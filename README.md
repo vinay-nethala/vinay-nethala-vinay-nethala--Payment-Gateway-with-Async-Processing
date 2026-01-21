@@ -1,333 +1,454 @@
-# Payment Gateway Async Pro
+# ⚡ Async Payment Gateway – Production-Ready System
 
-An industrial-grade, production-ready payment gateway with asynchronous payment processing, secure webhook delivery, and a lightweight embeddable SDK — built on Node.js, Express, PostgreSQL, Redis, Docker, and React.
+ A real-world **asynchronous payment gateway** built using modern backend architecture  
+ Designed to demonstrate scalability, reliability, and secure payment workflows
 
----
-
-## 🚀 Features
-
-- **Asynchronous Payment Processing:** Non-blocking API using Redis + Bull job queues  
-- **Secure Webhooks:** HMAC-SHA256 signed, delivered with automatic retries and exponential backoff  
-- **Embeddable SDK:** Tiny 3.77 KB JavaScript widget with modal & iframe integration  
-- **Idempotency Keys:** Prevent duplicate requests within 24 hours per merchant  
-- **Full Docker Compose Setup:** Easy local and production deployment  
-- **Merchant Dashboard:** Real-time monitoring of orders, payments, webhooks, and retries  
-- **Test Mode:** Fast simulation of success/failure with configurable delays  
+**Tech Stack:** Node.js, Express, Bull (Redis), PostgreSQL, React, Docker
 
 ---
 
-## 🏗️ System Architecture
-```
+## 📌 Overview
 
+This project implements a **production-style payment gateway** where payments are processed **asynchronously** using background workers instead of blocking API requests.
 
-graph TB
-    subgraph External Systems
-        MERCHANT[Merchant Website]
-        WEBHOOK_ENDPOINT[Merchant Webhook Endpoint]
-    end
+The system follows the same architectural patterns used by real payment companies, focusing on:
+- Reliability
+- Scalability
+- Fault tolerance
+- Secure merchant communication
 
-    subgraph Frontend
-        SDK[Embeddable SDK<br/>3.77 KB]
-        DASHBOARD[Dashboard (React) :3000]
-        CHECKOUT[Checkout Page (React) :3001]
-    end
+This is **not a basic CRUD project**, but a system-design-oriented implementation.
 
-    subgraph API Layer
-        API[API Server (Express) :8000]
-        AUTH[Auth Middleware]
-        ROUTES[API Route Handlers]
-    end
-
-    subgraph Worker Layer
-        WORKER[Worker Service (Bull Queues)]
-        PAY_PROC[Payment Processor]
-        WEBHOOK_PROC[Webhook Deliverer]
-        REFUND_PROC[Refund Processor]
-    end
-
-    subgraph Data Layer
-        POSTGRES[(PostgreSQL)]
-        REDIS[(Redis)]
-    end
-
-    MERCHANT -->|Integrate| SDK
-    SDK -->|Open Modal| CHECKOUT
-    MERCHANT -->|API Calls| API
-    DASHBOARD -->|Manage| API
-    CHECKOUT -->|Create Payment| API
-
-    API --> AUTH --> ROUTES -->|Enqueue Jobs| REDIS
-    WORKER -->|Process Jobs| REDIS
-    WORKER -->|Update DB| POSTGRES
-    API <-->|CRUD| POSTGRES
-    WEBHOOK_PROC -->|Send Webhook POST with HMAC| WEBHOOK_ENDPOINT
-```
-
-
-🔄 Webhook Delivery & Retry Mechanism
-```
-
-stateDiagram-v2
-    [*] --> Pending: Webhook Created
-    Pending --> Attempt1: Immediate
-    Attempt1 --> Success: HTTP 2xx
-    Attempt1 --> Attempt2: Fail (Wait 1 min)
-    Attempt2 --> Success
-    Attempt2 --> Attempt3: Fail (Wait 5 min)
-    Attempt3 --> Success
-    Attempt3 --> Attempt4: Fail (Wait 30 min)
-    Attempt4 --> Success
-    Attempt4 --> Attempt5: Fail (Wait 2 hrs)
-    Attempt5 --> Success
-    Attempt5 --> Failed: Max retries reached
-    Success --> [*]
-    Failed --> [*]
 ---
+
+## 🧠 Core Concepts Used
+
+| Concept | Purpose |
+|------|------|
+| Async Processing | Prevents blocking API calls |
+| Redis Queues | Reliable job execution |
+| Background Workers | Handles long-running tasks |
+| Webhooks | Notifies merchants of events |
+| HMAC Security | Verifies webhook authenticity |
+| Idempotency | Prevents duplicate charges |
+| Docker | Production-like deployment |
+
+---
+
+## 🏗️ High-Level Architecture
+
 ```
+Merchant App
+     |
+     |  (API Requests)
+     v
+API Server (Node + Express)
+     |
+     |  (Jobs)
+     v
+Redis Queue
+     |
+     |  (Workers)
+     v
+Worker Service
+     |
+     |  (DB Updates + Webhooks)
+     v
+PostgreSQL & Merchant Webhook
 
-
-
-
-📚 Database Schema
-Mermaid
-```
-
-erDiagram
-    MERCHANTS ||--o{ ORDERS : creates
-    MERCHANTS ||--o{ PAYMENTS : processes
-    MERCHANTS ||--o{ REFUNDS : issues
-    MERCHANTS ||--o{ WEBHOOK_LOGS : receives
-    MERCHANTS ||--o{ IDEMPOTENCY_KEYS : uses
-    ORDERS ||--|| PAYMENTS : has
-    PAYMENTS ||--o{ REFUNDS : has
-
-    MERCHANTS {
-        uuid id PK
-        string email UK
-        string business_name
-        string api_key UK
-        string api_secret
-        string webhook_url
-        string webhook_secret
-        timestamp created_at
-    }
-
-    ORDERS {
-        string id PK
-        uuid merchant_id FK
-        integer amount
-        string currency
-        string receipt
-        string status
-        timestamp created_at
-    }
-
-    PAYMENTS {
-        string id PK
-        string order_id FK
-        uuid merchant_id FK
-        integer amount
-        string currency
-        string method
-        string status
-        boolean captured
-        string error_code
-        timestamp created_at
-    }
-
-    REFUNDS {
-        string id PK
-        string payment_id FK
-        uuid merchant_id FK
-        integer amount
-        string reason
-        string status
-        timestamp created_at
-        timestamp processed_at
-    }
-
-    WEBHOOK_LOGS {
-        uuid id PK
-        uuid merchant_id FK
-        string event
-        jsonb payload
-        string status
-        integer attempts
-        timestamp next_retry_at
-        integer response_code
-        timestamp created_at
-    }
-
-    IDEMPOTENCY_KEYS {
-        string key PK
-        uuid merchant_id PK
-        jsonb response
-        timestamp created_at
-        timestamp expires_at
-    }
 ```
 
 ---
 
-⚙️ SDK Integration Flow
-```
+## 🔄 Payment Lifecycle
 
-Mermaid
-sequenceDiagram
-    participant Merchant
-    participant SDK
-    participant Modal
-    participant Iframe
-    participant API
+1. Merchant creates an **order**
+2. Merchant initiates a **payment**
+3. API responds immediately with `pending`
+4. Worker processes payment in background
+5. Status updated (`success` / `failed`)
+6. Webhook sent to merchant
+7. Retry mechanism handles failures
 
-    Merchant->>SDK: new PaymentGateway({orderId, onSuccess, onFailure})
-    Merchant->>SDK: checkout.open()
-    SDK->>Modal: Create modal overlay
-    SDK->>Iframe: Create iframe with order_id
-    SDK->>Merchant: Append modal to DOM
-
-    Note over Iframe: User fills payment details
-    Iframe->>API: POST /payments
-    API-->>Iframe: 201 Created (pending)
-
-    loop Poll every 2s
-        Iframe->>API: GET /payments/:id
-        API-->>Iframe: Payment status
-    end
-
-    alt Payment Success
-        Iframe->>SDK: postMessage(success)
-        SDK->>Merchant: onSuccess callback
-        SDK->>Modal: Remove modal
-    else Payment Failed
-        Iframe->>SDK: postMessage(failure)
-        SDK->>Merchant: onFailure callback
-    end
 ---
-```
 
+## 🪝 Webhook Delivery System
 
-⚡ Quick Start
+- Webhooks are delivered **as background jobs**
+- Each webhook is signed using **HMAC-SHA256**
+- Failed deliveries are retried automatically
+
+### Retry Strategy
+
+| Attempt | Delay |
+|------|------|
+| 1 | Immediate |
+| 2 | 1 minute |
+| 3 | 5 minutes |
+| 4 | 30 minutes |
+| 5 | 2 hours |
+
+After maximum retries, the webhook is marked as **failed**.
+
+---
+
+## 🗄️ Database Tables
+
+- `merchants`
+- `orders`
+- `payments`
+- `refunds`
+- `webhook_logs`
+- `idempotency_keys`
+
+### Design Benefits
+
+✔ Full payment audit trail  
+✔ Safe retry handling  
+✔ Clean separation of concerns  
+✔ Scalable schema  
+
+---
+
+## 🔐 Security Features
+
+- API Key + Secret authentication
+- HMAC signature verification
+- Idempotency keys for duplicate protection
+- Input validation
+- SQL injection prevention
+
+---
+
+## ✨ Features
+
+### Core Features
+- Asynchronous payment processing
+- Webhook delivery with retry logic
+- Refund handling (full & partial)
+- Idempotent APIs
+
+### Developer Experience
+- Embeddable JavaScript checkout SDK
+- Test mode for fast evaluation
+- Dashboard for webhook monitoring
+
+### Operational Features
+- Worker health checks
+- Queue monitoring
+- Graceful shutdown support
+- Docker-based setup
+
+---
+
+## 🚀 Getting Started
 ## Prerequisites
-Docker Desktop installed and running
 
+Docker & Docker Compose
 
-Node.js 18+ (optional for local development)
+Node.js 18+
 
 Git
-Installation & Run
-```Bash
-git clone https://github.com/shahanth4444/payment-gateway-async-pro.git
-cd payment-gateway-async-pro
-docker-compose up -d --build
 ```
-
-
-Access Points
-Service
-URL
-Description
-API
+git clone https://github.com/vinay-nethala/Payment-Gateway-with-Async-Processing-and-Webhooks
+cd Payment-Gateway-with-Async-Processing-and-Webhooks
+docker-compose up -d
 ```
+## 🌐 Service URLs
+## Service	URL
+API Server	http://localhost:8000
 
-http://localhost:8000
-REST API Server
+Dashboard	http://localhost:3000
+
+Checkout	http://localhost:3001
+
+## 🔑 Test Credentials
 ```
+API Key: key_test_abc123
+API Secret: secret_test_xyz789
+Webhook Secret: whsec_test_abc123
 ```
-Dashboard
-http://localhost:3000
+## 📡 API Example
+## Create Payment (Async)
 ```
-```
-
-
-
-Merchant Dashboard UI
-Checkout
-http://localhost:3001
-
-http://localhost:3001/checkout.js
-```
-
-
-Create Order
-```Bash
 curl -X POST http://localhost:8000/api/v1/orders \
--H "X-Api-Key: key_test_abc123" \
--H "X-Api-Secret: secret_test_xyz789" \
--H "Content-Type: application/json" \
--d '{"amount":50000,"currency":"INR","receipt":"order_001"}'
+  -H "X-Api-Key: key_test_abc123" \
+  -H "X-Api-Secret: secret_test_xyz789" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "amount": 50000,
+    "currency": "INR",
+    "receipt": "receipt_123"
+  }'
 ```
-
-Create Payment
-```Bash
+## Response:
+```
+{
+  "id": "order_NXhj67fGH2jk9mPq",
+  "amount": 50000,
+  "currency": "INR",
+  "receipt": "receipt_123",
+  "status": "created",
+  "created_at": "2024-01-15T10:30:00Z"
+}
+```
+## 2. Create Payment (Async)
+```
 curl -X POST http://localhost:8000/api/v1/payments \
--H "X-Api-Key: key_test_abc123" \
--H "X-Api-Secret: secret_test_xyz789" \
--H "Idempotency-Key: unique_key_123" \
--H "Content-Type: application/json" \
--d '{"order_id":"order_001","method":"upi","vpa":"success@paytm"}'
+  -H "X-Api-Key: key_test_abc123" \
+  -H "X-Api-Secret: secret_test_xyz789" \
+  -H "Idempotency-Key: unique_request_id_123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "order_id": "order_NXhj67fGH2jk9mPq",
+    "method": "upi",
+    "vpa": "user@paytm"
+  }'
+```
+## Response:
+```
+{
+  "id": "pay_H8sK3jD9s2L1pQr",
+  "order_id": "order_NXhj67fGH2jk9mPq",
+  "amount": 50000,
+  "currency": "INR",
+  "method": "upi",
+  "vpa": "user@paytm",
+  "status": "pending",
+  "created_at": "2024-01-15T10:31:00Z"
+}
+```
+## 3. Payment Status
+```
+curl http://localhost:8000/api/v1/payments/pay_H8sK3jD9s2L1pQr \
+  -H "X-Api-Key: key_test_abc123" \
+  -H "X-Api-Secret: secret_test_xyz789"
+```
+## create Refund
+```
+curl http://localhost:8000/api/v1/webhooks?limit=10&offset=0 \
+  -H "X-Api-Key: key_test_abc123" \
+  -H "X-Api-Secret: secret_test_xyz789"
+```
+##  Job Queue Status 
+```
+curl http://localhost:8000/api/v1/test/jobs/status
+```
+## Response 
+```
+{
+  "pending": 5,
+  "processing": 2,
+  "completed": 100,
+  "failed": 0,
+  "worker_status": "running"
+}
+```
+## 🔌 SDK Integration
+## Installation
+Add the SDK script to your website:
+```
+<script src="http://localhost:3001/checkout.js"></script>
+```
+## usage
+```
+<button id="pay-button">Pay ₹500.00</button>
+
+<script>
+document.getElementById('pay-button').addEventListener('click', function() {
+  const checkout = new PaymentGateway({
+    key: 'key_test_abc123',
+    orderId: 'order_xyz',
+    onSuccess: function(response) {
+      console.log('Payment successful:', response.paymentId);
+      // Redirect to success page
+      window.location.href = '/success?payment_id=' + response.paymentId;
+    },
+    onFailure: function(error) {
+      console.log('Payment failed:', error);
+      // Show error message
+      alert('Payment failed: ' + error.error);
+    },
+    onClose: function() {
+      console.log('Payment modal closed');
+    }
+  });
+  
+  checkout.open();
+});
+</script>
+```
+### 🪝 Webhook Integration
+Configure Webhook URL
+Option 1: Via Dashboard
+```
+Go to http://localhost:3000/webhooks
+Enter your webhook URL
+Copy the webhook secret
+Click "Save Configuration"
 ```
 
-Check Payment Status
-```Bash
-curl http://localhost:8000/api/v1/payments/pay_abc123 \
--H "X-Api-Key: key_test_abc123" \
--H "X-Api-Secret: secret_test_xyz789"
+
+
+## Option 2: Via Database
+
+UPDATE merchants 
 ```
 
-View Webhook Logs
-```Bash
-curl http://localhost:8000/api/v1/webhooks?limit=5 \
--H "X-Api-Key: key_test_abc123" \
--H "X-Api-Secret: secret_test_xyz789"
+SET webhook_url = 'https://yoursite.com/webhook',
+    webhook_secret = 'whsec_test_abc123'
+WHERE email = 'test@example.com';
 ```
 
-## 🔄 Webhook Setup & Monitoring
-Use webhook URL like http://yoursite.com/webhook in Docker environments.
-Webhooks are signed with whsec_test_abc123 using merchant’s webhook secret.
-Retry strategy with exponential backoff: 1 min → 5 min → 30 min → 2 hrs.
-Dashboard UI for manual retry and detailed webhook event logs.
-
-## 🛠️ Operational & Scaling Notes
-Workers process jobs asynchronously (payments, webhooks, refunds)
-Logs available via docker-compose logs -f worker for troubleshooting
-Scale horizontally by increasing worker container replicas
-Use PostgreSQL & Redis connection pooling for performance
-
-### 🔒 Security Best Practices
-API requests authenticated with API key + secret headers
-Webhook payloads verified with HMAC-SHA256 signatures
-SQL queries use parameterized statements to prevent injection
-Input validation ensures data integrity on all endpoints
-
-🗂️ Project Structure
+## Verify Webhook Signature
 ```
 
+const crypto = require('crypto');
+const express = require('express');
+const app = express();
+
+app.use(express.json());
+
+app.post('/webhook', (req, res) => {
+  const signature = req.headers['x-webhook-signature'];
+  const payload = JSON.stringify(req.body);
+  
+  // Verify HMAC signature
+  const expectedSignature = crypto
+    .createHmac('sha256', 'whsec_test_abc123')
+    .update(payload)
+    .digest('hex');
+  
+  if (signature !== expectedSignature) {
+    console.log('❌ Invalid signature');
+    return res.status(401).send('Invalid signature');
+  }
+  
+  console.log('✅ Webhook verified');
+  console.log('Event:', req.body.event);
+  console.log('Data:', req.body.data);
+  
+  // Process webhook
+  // ...
+  
+  res.status(200).send('OK');
+});
+
+app.listen(4000);
+```
+## 🪝 Webhook Events
+
+The system notifies merchants about important payment and refund actions using **webhooks**.  
+Each event contains a signed payload so merchants can safely process it.
+
+### Supported Events
+
+| Event Name | Description | Payload |
+|-----------|------------|---------|
+| `payment.created` | Payment entry is created | Payment object |
+| `payment.pending` | Payment is under processing | Payment object |
+| `payment.success` | Payment completed successfully | Payment object |
+| `payment.failed` | Payment failed during processing | Payment object with error details |
+| `refund.created` | Refund request initiated | Refund object |
+| `refund.processed` | Refund successfully completed | Refund object |
+
+---
+
+## 🔁 Webhook Retry Mechanism
+
+If a webhook delivery fails (non-2xx HTTP response), the system **automatically retries** the delivery using **exponential backoff**.
+
+### Retry Schedule
+
+| Attempt | Delay Before Retry | Total Elapsed Time |
+|-------|------------------|------------------|
+| 1 | Immediate | 0 seconds |
+| 2 | 1 minute | 1 minute |
+| 3 | 5 minutes | 6 minutes |
+| 4 | 30 minutes | 36 minutes |
+| 5 | 2 hours | 2 hours 36 minutes |
+
+### Failure Handling
+
+- After **5 unsuccessful attempts**, the webhook is marked as **permanently failed**
+- All attempts are logged in the database
+- Merchants can **manually retry failed webhooks** from the Dashboard UI
+
+This approach ensures **reliable event delivery** while preventing unnecessary load on merchant servers.
+## 🧪 Test Payment Flow
+
+Follow the steps below to verify the complete payment lifecycle, including async processing and webhook delivery.
+
+### 1️⃣ Create an Order
+
+```bash
+curl -X POST http://localhost:8000/api/v1/orders \
+  -H "X-Api-Key: key_test_abc123" \
+  -H "X-Api-Secret: secret_test_xyz789" \
+  -H "Content-Type: application/json" \
+  -d '{"amount": 50000, "currency": "INR", "receipt": "test_123"}'
+```
+## 2️⃣ Open Checkout Page
+
+Open the checkout UI in your browser using the generated order ID:
+```
+http://localhost:3001/checkout?order_id=ORDER_ID
+
+```
+## 3️⃣ Complete the Payment
+
+Choose UPI or Card
+
+Enter test details
+
+Submit the payment
+
+Payment will be processed asynchronously by the worker.
+
+## 4️⃣ Verify Webhook Delivery
+
+Check your webhook receiver server logs
+
+Confirm receipt of payment.success or payment.failed events
+
+## 🧪 Test SDK Integration
+
+You can test the embeddable checkout SDK using the provided HTML file.
+```
+# Windows
+Start-Process test-sdk.html
+
+# macOS / Linux
+open test-sdk.html
+
+```
+## ⚙️ Test Mode Configuration
+
+To speed up testing and demos, enable test mode in docker-compose.yml.
+```
+environment:
+  TEST_MODE: "true"
+  TEST_PROCESSING_DELAY: "1000"          # 1 second instead of 5–10 seconds
+  TEST_PAYMENT_SUCCESS: "true"           # Force payment success
+  WEBHOOK_RETRY_INTERVALS_TEST: "true"   # Fast webhook retries (5–20 seconds)
+```
+## License
+
+This project is released under the **MIT License**.
+
+---
+
+## 👤 Author
+
+**vinay-nethala**  
+GitHub: https://github.com/vinay-nethala
+
+---
+
+## Repository
+
+Source Code:  
+https://github.com/https://github.com/vinay-nethala/Payment-Gateway-with-Async-Processing
 
 
-payment-gateway-async-pro/
-├── backend/
-│   ├── src/
-│   │   ├── routes/           # API route handlers
-│   │   ├── jobs/             # Background job processors
-│   │   ├── services/         # Business logic modules
-│   │   ├── middleware/       # Authentication & validation
-│   │   ├── config/           # DB & queue configuration
-│   │   ├── workers/          # Job queue consumers
-│   │   └── index.js          # API server entrypoint
-│   ├── migrations/           # DB schema scripts
-│   ├── Dockerfile            # API server Dockerfile
-│   ├── Dockerfile.worker     # Worker Dockerfile
-│   └── package.json
-├── dashboard/                # Merchant Dashboard (React app)
-├── checkout/                 # Payment Checkout Page (React app)
-├── checkout-widget/          # Embeddable JavaScript SDK
-├── docker-compose.yml
-└── README.md
-````
 
-👨‍💻 Author & License
-Made for demonstration and learning purposes.
-Licensed under MIT License.
-Thank you for choosing Payment Gateway Async Pro!
-Happy coding & seamless payments! 🎉
